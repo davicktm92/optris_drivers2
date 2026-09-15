@@ -2,6 +2,7 @@
 
 
 #include <chrono>
+#include <stdexcept>
 
 namespace optris_drivers2
 {
@@ -11,9 +12,31 @@ OptrisImager::OptrisImager(evo::IRDevice* dev, evo::IRDeviceParams params) : Nod
 
   RCLCPP_INFO(get_logger(), "Serial: %d", params.serial);
 
-  _imager.init(&params, dev->getFrequency(), dev->getWidth(), dev->getHeight(), dev->controlledViaHID());
-  _imager.setClient(this);
+  bool init_ok = _imager.init(
+    &params,
+    dev->getFrequency(),
+    dev->getWidth(),
+    dev->getHeight(),
+    dev->controlledViaHID(),
+    dev->getHwRev(),
+    dev->getFwRev());
 
+  RCLCPP_INFO(
+      get_logger(),
+      "Device raw stream: %ux%u @ %u Hz, HW=%u FW=%u",
+      dev->getWidth(),
+      dev->getHeight(),
+      dev->getFrequency(),
+      dev->getHwRev(),
+      dev->getFwRev());
+
+  if (!init_ok)
+  {
+      RCLCPP_ERROR(get_logger(), "IRImager initialization failed");
+      throw std::runtime_error("IRImager initialization failed");
+  }
+
+  _imager.setClient(this);
   _bufferRaw = new unsigned char[dev->getRawBufferSize()];
 
   auto qos = rclcpp::QoS(
@@ -77,14 +100,26 @@ OptrisImager::OptrisImager(evo::IRDevice* dev, evo::IRDeviceParams params) : Nod
 
   _dev = dev;
 
-  _dev->startStreaming();
+  int stream_ret = _dev->startStreaming();
 
-  // create_wall_timer changes the behaviour of spin. Services will stop working
-  _run = true;
-  _th = new std::thread(&OptrisImager::timer_callback, this);
+  if (stream_ret != 0)
+  {
+      RCLCPP_ERROR(
+          get_logger(),
+          "Could not start Optris stream. startStreaming() returned %d",
+          stream_ret);
 
-  return;
-}
+      throw std::runtime_error("Optris startStreaming failed");
+  }
+
+  RCLCPP_INFO(get_logger(), "Optris streaming started successfully");
+
+    // create_wall_timer changes the behaviour of spin. Services will stop working
+    _run = true;
+    _th = new std::thread(&OptrisImager::timer_callback, this);
+
+    return;
+  }
 
 OptrisImager::~OptrisImager()
 {
