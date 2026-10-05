@@ -43,13 +43,15 @@ int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
 
-  if(argc!=2)
+  auto args = rclcpp::remove_ros_arguments(argc, argv);
+
+  if(args.size()!=2)
   {
     std::cerr << "usage: ros2  run optris_drivers2 optris_imager_node <xmlConfig>" << std::endl;
     return -1;
   }
 
-  std::string xmlConfig = argv[1];
+  std::string xmlConfig = args[1];
 
   // A specific configuration file for each imager device is needed (cf. config directory)
   struct stat s;
