@@ -1,81 +1,346 @@
-# ROS2 wrapper for irDirectSDK
+# Optris ROS 2 Driver
 
-## Installation
-Nodes have been tested with the version Dashing Diademata (short form: Dashing)
+ROS 2 driver for Optris thermal cameras based on the Optris **IR Direct SDK (`libirimager`)**.
 
-Reference: https://index.ros.org/doc/ros2/Installation/
+This version has been tested with:
 
-## Installing IR Imager Direct SDK
+* **Ubuntu 22.04 LTS**
+* **ROS 2 Humble**
+* **Optris PI640**
+* USB connection
+* 640 × 480 thermal image
+* 32 Hz acquisition rate
 
-In order to successfully compile this package, the IR Imager Direct SDK for Optris cameras is needed.
+> This repository is based on the original `Optris/optris_drivers2` package and includes the configuration and setup required to run it on ROS 2 Humble.
 
-### **Installation Steps**
-1. Download the SDK from the official Optris website: [IR Imager Direct SDK](https://sdk.optris.com/downloads/)
-2. Install the downloaded package:
-  ```
-  dpkg -i libirimager-<version>-$(dpkg --print-architecture).deb
-  ```
-3. Connect your device and download the calibration files:
+---
+
+## Requirements
+
+Install the required ROS 2 and Linux packages:
+
+```bash
+sudo apt update
+
+sudo apt install -y \
+    ros-humble-image-transport \
+    ros-humble-image-transport-plugins \
+    ros-humble-camera-info-manager \
+    ros-humble-image-tools \
+    v4l-utils \
+    usbutils \
+    libudev-dev \
+    libusb-1.0-0-dev
 ```
+
+The **Optris IR Direct SDK (`libirimager`)** must also be installed.
+
+The SDK can be downloaded from:
+
+https://github.com/Optris/irdirectsdk_downloads
+
+Install the Debian package corresponding to Ubuntu 22.04 and your architecture.
+
+Then install the downloaded package:
+
+```bash
+sudo apt install ./libirimager*.deb
+```
+
+Connect camera and verify the installation:
+
+```bash
+which ir_find_serial
+which ir_generate_configuration
+which ir_download_calibration
+```
+
+---
+
+# USB and Video Permissions
+
+The Optris camera is accessed through the Linux Video4Linux2 (`V4L2`) interface.
+
+The user running the ROS 2 node must have permission to access `/dev/video*`.
+
+Add the current user to the `video` group:
+
+```bash
+sudo usermod -aG video $USER
+```
+
+After running this command, **log out and log back in**, or reboot the computer.
+
+Verify that the user belongs to the `video` group:
+
+```bash
+groups
+```
+
+The output should contain:
+
+```text
+video
+```
+
+Check the available video devices:
+
+```bash
+v4l2-ctl --list-devices
+```
+
+---
+
+# UVC Video Configuration
+
+For high-rate streaming with some Optris cameras, the Linux `uvcvideo` driver may require the `nodrop=1` option.
+
+Check the current value:
+
+```bash
+cat /sys/module/uvcvideo/parameters/nodrop
+```
+
+To enable it temporarily:
+
+```bash
+sudo sh -c 'echo -n 1 > /sys/module/uvcvideo/parameters/nodrop'
+```
+
+Alternatively, reload the module with:
+
+```bash
+sudo rmmod uvcvideo
+sudo modprobe uvcvideo nodrop=1
+```
+
+> If another USB webcam is currently using `uvcvideo`, close any camera application before reloading the module.
+
+To make this configuration persistent:
+
+```bash
+echo "options uvcvideo nodrop=1" | \
+sudo tee /etc/modprobe.d/uvcvideo.conf
+```
+
+Reboot the computer after creating the persistent configuration.
+
+Verify:
+
+```bash
+cat /sys/module/uvcvideo/parameters/nodrop
+```
+
+---
+
+# Camera Calibration
+
+Find the camera serial number:
+
+```bash
+ir_find_serial
+```
+
+Download the corresponding Optris calibration files:
+
+```bash
 sudo ir_download_calibration
 ```
-4. Generate the configuration file: 
-```
-ir_generate_configuration
-```
-5. Copy the printed XML text into a file.
 
-## Environment setup
-```
-$ source /opt/ros/dashing/setup.bash
-$ source install/setup.bash
+The calibration files are normally stored in:
+
+```text
+/usr/share/libirimager/cali
 ```
 
-## Services
-Capitalized service names are no longer valid. Use underscores to define parameters.
+---
 
-## Parameters
-Passing ROS command line parameters is not supported in Dashing. The version eloquent will introduce this features.
-Thus, a plain command line parameter has been used for this version. argv[1] must be the path to a valid xml configuration file.
+# Camera Configuration
 
-## Build
-```
-$ colcon build --symlink-install
+An example configuration for the **Optris PI640** is provided in:
+
+```text
+config/pi640.example.xml
 ```
 
-## Execute
-... device driver node
-```
-$ ros2 run optris_drivers2 optris_imager_node <xml_config_path>
+Copy the example before editing it:
+
+```bash
+cp config/pi640.example.xml config/pi640.xml
 ```
 
-... color conversion node (converts temperature images to false color images)
-```
-$ ros2 run optris_drivers2 optris_colorconvert_node
+Edit:
+
+```xml
+<serial>YOUR_SERIAL_NUMBER</serial>
 ```
 
-... displaying images
-```
-$ ros2 run image_tools showimage -t /thermal_image_view
+using the serial number returned by:
+
+```bash
+ir_find_serial
 ```
 
-... switch palette for color conversion
-```
-$ ros2 service call palette optris_drivers2/srv/Palette "{palette : 3}"
+Alternatively, a configuration can be generated directly by the Optris SDK:
+
+```bash
+ir_generate_configuration > config/pi640.xml
 ```
 
-## Image compression
-The node optris_colorconvert_node can publish compressed images via image_transport. Be sure to have installed image-transport-plugins:
-```
-$ sudo apt install ros-dashing-image-transport-plugins
+---
+
+# Build with ROS 2 Humble
+
+Create or use a ROS 2 workspace:
+
+```bash
+mkdir -p ~/optris_ws/src
+cd ~/optris_ws/src
 ```
 
-Bandwidth measurement can be done either raw:
-```
-$ ros2 topic bw /thermal_image_view
+Clone the repository:
+
+```bash
+git clone <REPOSITORY_URL>
 ```
 
-or compressed:
+Install ROS dependencies:
+
+```bash
+cd ~/optris_ws
+
+source /opt/ros/humble/setup.bash
+
+rosdep install \
+    --from-paths src \
+    --ignore-src \
+    -r -y
 ```
-$ ros2 topic bw /thermal_image_view/compressed
+
+Compile:
+
+```bash
+colcon build \
+    --packages-select optris_drivers2 \
+    --symlink-install
 ```
+
+Source the workspace:
+
+```bash
+source ~/optris_ws/install/setup.bash
+```
+
+---
+
+# Run the Optris PI640
+
+Make sure that:
+
+* No other application is using the camera.
+
+Run the camera node:
+
+```bash
+ros2 run optris_drivers2 optris_imager_node \
+    /absolute/path/to/pi640.xml
+```
+
+For example:
+
+```bash
+ros2 run optris_drivers2 optris_imager_node \
+    ~/optris_ws/src/optris_drivers2/config/pi640.xml
+```
+
+---
+
+# Verify the ROS 2 Stream
+
+In another terminal:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/optris_ws/install/setup.bash
+```
+
+List the topics:
+
+```bash
+ros2 topic list
+```
+
+Check the thermal image frequency:
+
+```bash
+ros2 topic hz /thermal_image
+```
+
+The main image topic is:
+
+```text
+/thermal_image
+```
+
+---
+
+# False-Color Thermal Image
+
+Start the color conversion node:
+
+```bash
+ros2 run optris_drivers2 optris_colorconvert_node
+```
+
+The converted thermal image is published on:
+
+```text
+/thermal_image_view
+```
+
+It can be visualized using:
+
+```bash
+ros2 run image_tools showimage -t /thermal_image_view
+```
+
+---
+
+# Troubleshooting
+
+If the camera is detected but no thermal images are published, check the system layer by layer.
+
+### 1. Check USB
+
+```bash
+lsusb
+```
+
+### 2. Check the V4L2 device
+
+```bash
+v4l2-ctl --list-devices
+```
+
+### 3. Check user permissions
+
+```bash
+groups
+ls -l /dev/video*
+```
+
+The user should belong to the `video` group.
+
+---
+
+## Credits
+
+This repository is based on the original Optris ROS 2 driver:
+
+https://github.com/Optris/optris_drivers2
+
+which was originally derived from:
+
+https://github.com/evocortex/optris_drivers2
+
+The original license and copyright notices are preserved.
